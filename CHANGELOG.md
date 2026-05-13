@@ -51,11 +51,11 @@ Persistencia basada en una base de datos real:
 ```
 ## Cambios realizados durante la migración 
 
-### Corrección de errores
+### Corrección de errores módulo database y test_database
 
 Durante la migración de CSV a SQLite, se presentaron diversos errores al adaptar el código, que se fueron revisando durante este proceso.
 
-En el módulo "database.py", que es el encargado de toda la funcionalidad de la base de datos se presentó lo siguiente:
+El módulo "database.py" que es el encargado de la funcionalidad de la base de datos, y el módulo "test_database.py", encargado de realizar las pruebas unitarias para verificar la integridad de las funciones, se presentaron los siguientes errores:
 
 ### 1 - Problema: Uso de "DB" global
 
@@ -344,3 +344,4 @@ self.assertEqual(cliente_borrado.dni, '48H')
 self.assertIsNone(cliente_eliminado)
 
 ```
+
