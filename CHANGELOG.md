@@ -778,3 +778,238 @@ Mejoras:
 - La función siempre devuelve `True` o `False`
 - Los tests funcionan correctamente
 
+### Módulo GUI (Interfaz Gráfica)
+
+Uno de los elementos que conforman a esta aplicación, es que para su manipulación, cuenta con un menú que se ejecuta en la terminal, y una interfaz gráfica, con la que el usuario puede interactuar de manera intuitiva, en este apartado abordaremos los problemas que se presentaron, y como se fueron solucionando
+
+### 1 - Refactorización del sistema de validación del DNI
+
+Durante la migración del proyecto desde un sistema basado en CSV hacia SQLite, surgieron varios cambios importantes relacionados con las validaciones en tiempo real de la interfaz gráfica
+
+Al implementar la validación reactiva del DNI dentro de la GUI, apareció el error: `TypeError: dni_valido() takes 1 positional argument but 2 were given`, ya que originalmente, el proyecto trabajaba utilizando listas en memoria cargadas desde un archivo CSV.
+
+La función original era:
+
+```
+
+def dni_valido(dni, lista):
+
+    if not re.match("[0-9]{2}[A-Z]$", dni):
+
+        print("DNI incorrecto, debe cumplir el formato.")
+
+        return False
+
+```
+Y era llamada desde la GUI así:
+
+```
+valido = helpers.dni_valido(valor, db.Clientes.lista)
+```
+
+En ese momento:
+
+- `lista` contenía todos los clientes cargados desde el CSV
+- La validación dependía directamente de estructuras en memoria
+
+### 2 - Cambio durante la migración a SQLite
+
+Después de migrar el sistema a SQLite:
+
+- `Clientes.lista` dejó de existir
+- Los datos ahora se consultaban directamente desde la base de datos
+
+La función se simplificó a:
+
+```
+
+def dni_valido(dni):
+
+    if not re.match('[0-9]{2}[A-Z]$', dni):
+
+        print("DNI incorrecto, debe cumplir el formato")
+
+        return False
+
+    return True
+
+```
+
+Sin embargo, la GUI segúia enviando dos argumentos, lo que provocó el `TypeError`
+
+Así que, se decidió separar responsabilidades:
+
+|   Archivo     |     Responsabilidad          |
+|---------------|------------------------------|
+| `helpers.py`  | Validar formato              |
+| `database.py` | Consultar SQLite             |
+| `GUI.py`      | Mostrar validación visual    |
+
+La validación del formato permaneció dentro de `helpers.py`, mientras que la verificación de existencia fue trasladada a SQLite
+
+### 3 - Nueva validación en SQLite
+
+Se agregó un nuevo método dentro de `database.py`:
+
+```
+
+@staticmethod
+def dni_existe(dni):
+
+    with sqlite3.connect(Clientes.DB) as conexion:
+
+        cursor = conexion.cursor()
+
+        cursor.execute(
+            "SELECT dni FROM clientes WHERE dni = ?",
+            (dni,)
+        )
+
+        resultado = cursor.fetchone()
+
+        if resultado:
+            return True, "El DNI ya existe"
+
+        return False, ""
+
+```
+
+Se realizó esto, porque ya no era necesario:
+
+- Recorrer listas
+- Almacenar clientes en memoria
+- Ni validar duplicados manualmente
+
+Ahora:
+
+- SQLite se  convirtió en la fuente principal de datos
+- La verificación de duplicados se realiza mediante consultas a SQL reales
+
+Esto permitió:
+
+- Desacoplar la lógica
+- Centralizar consultas
+- Mantener la GUI independiente de la base de datos
+
+### 4 - Problema con la conexión SQLite
+
+Durante la implementación apareció el error: `sqlite3.ProgrammingError: Cannot operate on a closed database`
+
+Esto porque el método utilizaba: `with sqlite3.connect(...) as conexion:` junto con: `conexion.close()`, pero el bloque `with` ya administra automáticamente la conexión, por lo que cerrarla manualmente provocaba el error, por lo que se eliminó el bloque: `conexion.close()`, permitiendo que `with` manejara correctamente el cierre de la conexión
+
+### 5 - Refactorización de la validación visual
+
+Código original:
+
+```
+
+if valido:
+    event.widget.configure({"bg":"Green"})
+else:
+    event.widget.configure({"bg":"Red"})
+
+```
+La validación solo comprobaba el formato del DNI, por lo que se implementó una nueva lógica en dos fases
+
+- 1. Validar el formato del DNI
+- 2. Verificar si el DNI ya existe en SQLite
+
+	Código final:
+
+```
+
+# Validamos el DNI
+if index == 0:
+
+    # Primero validamos que el formato es correcto
+    valido = helpers.dni_valido(valor)
+
+    if valido:
+
+        # Verificamos si el DNI ya existe
+        existe, mensaje = db.Clientes.dni_existe(valor)
+
+        # Si ya existe
+        if existe:
+
+            print(mensaje)
+
+            event.widget.configure({"bg":"Orange"})
+
+            self.validaciones[index] = False
+
+        # Si no existe
+        else:
+
+            event.widget.configure({"bg":"Green"})
+
+            self.validaciones[index] = True
+
+    else:
+
+        event.widget.configure({"bg":"Red"})
+
+        self.validaciones[index] = False
+
+```
+La validación terminó funcionando con tres estados
+
+|   Estado          |     Resultado           |
+|---------------    |-------------------------|
+| Formato inválido  | Fondo rojo              |
+| DNI duplicado     | Mensaje y color naranja |
+| DNI válido        | Fondo verde             |
+
+
+### 6 - Problema con el botón "Crear"
+
+El botón debía habilitarse únicamente cuando:
+
+- DNI
+- Nombre
+- Apellido
+
+Fueran válidos.
+La lógica original utilizaba: `self.validaciones[index] = valido`
+
+Sin embargo, el DNI podía tener:
+
+- Formato válido
+- Pero existir ya en SQLite
+
+Esto generaba estados parcialmente válidos, por lo que se modificó la validación para considerar ambas condiciones:
+
+```
+self.validaciones[index] = valido and not existe
+```
+Finalmente, el botón pasó a habilitarse mediante:
+
+```
+
+self.crear.config(
+    state=NORMAL if all(self.validaciones) else DISABLED
+)
+
+```
+
+Con esto, el sistema de validación quedó dividido en tres etapas:
+
+```
+helpers.py
+↓
+Validación de formato
+
+database.py
+↓
+Validación en SQLite
+
+GUI.py
+↓
+Respuesta visual
+```
+
+Y gracias a esto, se permitió:
+
+- Desacoplar responsabilidades
+- Mantener una arquitectura mas limpia
+- Adaptar correctamente el sistema desde CSV hacia SQLite
