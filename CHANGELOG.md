@@ -534,3 +534,247 @@ Con lo anteriormente mencionado, se obtuvieron los siguientes resultados:
 - Manejo de listas vacias sin errores
 - Se evita la recursión accidental
 - Centralización de toda la lógica de base de datos dentro de la clase `Clientes`
+
+### Módulo helpers y validaciones en formato
+
+El módulo "helpers", está dedicado a funciones auxiliares, donde una de estas, verifica que se cumpla el formato del DNI, además de que en esta etapa, también se verificaron otras validaciones, así como el manejo de registros duplicados, una mejora del flujo de interacción del usuario.
+
+Durante esta etapa del proyecto se realizaron ajustes principalmente en:
+
+- Validaciones del DNI
+- Manejo de duplicados
+- Conexión entre el menú y la base de datos
+- Adaptación de pruebas unitarias
+- Mejora del flujo de interacción del usuario
+
+### 1 - Separación de responsabilidades en la validación del DNI
+
+Originalmente, una sola función se encargaba de:
+
+- Validar el formato
+- Verificar duplicados
+
+```
+
+def dni_valido(dni, lista):
+    if not re.match('[0-9]{2}[A-Z]$', dni):
+        print("DNI incorrecto, debe cumplir el formato")
+        return False
+
+    for cliente in lista:
+        if cliente.dni == dni:
+            print("DNI utilizado por otro cliente")
+            return False
+
+    return True
+
+```
+Esto presentó varios errores, como lo fueron:
+
+- Mezcla de validaciones de formato
+- Lógica de persistencia
+- Manejo de datos almacenados
+
+### 2 - Refactorización de la validación de formato
+
+La validación del formato se aisló como función auxiliar independiente
+
+```
+
+import re
+
+def validar_dni_formato(dni):
+    return re.match(r'^[0-9]{2}[A-Z]$', dni) is not None
+
+```
+Tuvo mejoras en:
+
+- Es una función mas simple
+- Reutilizable
+- Más fácil de probar
+- Es independiente de la base de datos
+
+### 3 - Manejo de duplicados dentro de `database.py`
+
+La comprobación de DNI duplicado dejó de hacerse manualmente y pasó a manejarse directamente en la isnerción del cliente
+
+Antes:
+
+```
+
+cursor.execute(
+    "INSERT INTO clientes (dni, nombre, apellido) VALUES (?,?,?)",
+    (dni, nombre, apellido)
+)
+
+```
+
+Problema:
+
+Si el DNI ya existía, SQLite lanzaba una excepción, y el flujo podía romperse
+
+Después:
+
+```
+
+@staticmethod
+def crear(dni, nombre, apellido):
+    try:
+        with sqlite3.connect(Clientes.DB) as conexion:
+            cursor = conexion.cursor()
+            cursor.execute(
+                "INSERT INTO clientes (dni, nombre, apellido) VALUES (?,?,?)",
+                (dni, nombre, apellido)
+            )
+        return True
+
+    except sqlite3.IntegrityError:
+        return False
+
+```
+
+Mejoras:
+
+- Manejo de errores
+- La función informa si la operación fue exitosa
+- Se evita que el programa se detenga por excepciones
+
+### 4 - Integración correcta con el menú principal
+
+El menú pasó de asumir que todo salió bien, a verificar el resultado de la inserción
+
+Antes:
+
+```
+
+db.Clientes.crear(dni, nombre, apellido)
+print("Cliente añadido correctamente.")
+
+```
+Problema:
+
+El mensaje de éxito aparecía incluso si el DNI ya existía
+
+Después:
+
+```
+
+if db.Clientes.crear(dni, nombre, apellido):
+    print("Cliente añadido correctamente.")
+else:
+    print("Error: el DNI ya está registrado.")
+
+```
+Mejoras:
+
+- Mensajes coherentes con el resultado real
+- Mejor manejo de errores
+- Separación entre lógica y presentación
+
+### 5 - Mejora en la validación interactiva del DNI
+
+Se añadió un ciclo para repetir la entrada del DNI hasta que el formato sea válido
+
+Antes:
+
+Si el DNI era inválido, el flujo regresaba al menú principal
+
+Después:
+
+```
+
+while True:
+    dni = helpers.leer_texto(3, 3, "DNI (2 int y 1 char)").upper()
+
+    if helpers.validar_dni_formato(dni):
+        break
+
+    print("Formato inválido")
+
+```
+
+Mejoras:
+
+- Mejor experiencia de usuario
+- Evita reiniciar toda la operación
+- Flujo más natural
+
+### 6 - Adaptación de pruebas unitarias
+
+Las pruebas dejaron de validar múltiples responsabilidades juntas
+
+Antes:
+
+```
+
+self.assertFalse(helpers.dni_valido('48H'))
+
+```
+
+Problema: La prueba asumía que la función también verificaba duplicados
+
+### 7 - Separación de pruebas por responsabilidad 
+
+Validación de formato
+
+```
+
+def test_dni_formato_valido(self):
+    self.assertTrue(helpers.validar_dni_formato('00A'))
+
+```
+
+```
+
+def test_dni_formato_invalido(self):
+    self.assertFalse(helpers.validar_dni_formato('123'))
+
+```
+
+Validación de duplicados
+
+```
+
+def test_dni_duplicado(self):
+    db.Clientes.crear('48H', 'Juan', 'Perez')
+
+    self.assertFalse(
+        db.Clientes.crear('48H', 'Otro', 'Nombre')
+    )
+
+```
+
+Mejoras:
+
+- Tests más claros
+- Responsabilidades separadas
+- Mejor mantenimiento
+
+### 8 - Corrección del retorno en la función de validación
+
+Problema detectado
+
+La función devolvía `None` en casos válidos:
+
+```
+
+def dni_valido(dni):
+    if not re.match(...):
+        return False
+
+```
+Provocaba el error: `AssertionError: None is not true`
+
+Solución aplicada:
+
+```
+
+def validar_dni_formato(dni):
+    return re.match(r'^[0-9]{2}[A-Z]$', dni) is not None
+
+```
+Mejoras:
+
+- La función siempre devuelve `True` o `False`
+- Los tests funcionan correctamente
+
